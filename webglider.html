@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web Glider by Nilam</title>
+<style>
+body, html {
+margin: 0;
+padding: 0;
+width: 100vw;
+height: 100vh;
+overflow: hidden;
+background-color: #000;
+}
+#container {
+position: relative;
+width: 100vw;
+height: 100vh;
+}
+#webcam {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+object-fit: fill;
+transform: scaleX(-1);
+filter: brightness(0.65) contrast(1.2);
+z-index: 0;
+}
+#canvas {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+z-index: 5;
+pointer-events: none;
+}
+#hud {
+position: absolute;
+bottom: 0;
+left: 0;
+width: 100%;
+height: 48px;
+background: #0a0a0a;
+border-top: 1px solid #222;
+display: flex;
+align-items: center;
+padding: 0 15px;
+z-index: 10;
+font-family: 'Courier New', monospace;
+font-size: 11px;
+color: #777;
+box-sizing: border-box;
+}
+.hud-group {
+display: flex;
+flex-direction: column;
+margin-right: 25px;
+border-right: 1px solid #222;
+padding-right: 15px;
+}
+.timecode {
+color: #ff8a00;
+font-size: 16px;
+background: #151515;
+padding: 2px 8px;
+border-radius: 2px;
+margin: 0 15px;
+border: 1px solid #333;
+}
+#loading {
+position: fixed;
+top: 50%;
+left: 50%;
+transform: translate(-50%, -50%);
+color: #fff;
+font-family: sans-serif;
+letter-spacing: 5px;
+z-index: 100;
+text-shadow: 0 0 15px #ffffff;
+}
+</style>
+</head>
+<body>
+<div id="container">
+<div id="loading">INITIALIZING 1080P SENSORS...</div>
+<video id="webcam" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="hud">
+    <div class="hud-group">
+        <span>START: 1</span>
+        <span>IN_FPS: 60.0</span>
+    </div>
+    <div class="hud-group">
+        <span>END: 600</span>
+        <span>TEMPO: 120</span>
+    </div>
+    <div id="timecode" class="timecode">00:00:00:00</div>
+    <div class="hud-group" style="border:none">
+        <span id="frame-count" style="color:#fff">0</span>
+    </div>
+    <div style="flex-grow: 1; text-align: right; color: #00ffcc;">
+        HD_STREAM: 1920x1080 | 
+        HANDS: <span id="hand-val" style="color:white">0</span> | 
+        RENDER_FPS: <span id="fps-val" style="color:white">0</span>
+    </div>
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script>
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const fpsLabel = document.getElementById('fps-val');
+const handLabel = document.getElementById('hand-val');
+const timecodeLabel = document.getElementById('timecode');
+const frameLabel = document.getElementById('frame-count');
+const loading = document.getElementById('loading');
+
+let width, height;
+let results = null;
+
+const springPoints = {
+left: Array.from({ length: 21 }, () => ({ x: 0, y: 0, vx: 0, vy: 0 })),
+right: Array.from({ length: 21 }, () => ({ x: 0, y: 0, vx: 0, vy: 0 }))
+};
+
+function resize() {
+width = window.innerWidth;
+height = window.innerHeight;
+canvas.width = width;
+canvas.height = height;
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+const hands = new Hands({
+locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+maxNumHands: 2,
+modelComplexity: 1,
+minDetectionConfidence: 0.7,
+minTrackingConfidence: 0.7
+});
+
+hands.onResults((res) => {
+results = res;
+if (loading) loading.style.display = 'none';
+});
+
+async function startHDCamera() {
+const constraints = {
+video: {
+width: { ideal: 1920 },
+height: { ideal: 1080 },
+frameRate: { ideal: 60 }
+}
+};
+
+try {
+const stream = await navigator.mediaDevices.getUserMedia(constraints);
+video.srcObject = stream;
+video.onloadedmetadata = () => {
+video.play();
+processVideo();
+};
+} catch (err) {
+console.error("HD Camera Error: ", err);
+// Fallback to simpler constraints if 1080p is unavailable
+const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
+video.srcObject = fallbackStream;
+video.play();
+processVideo();
+}
+}
+
+async function processVideo() {
+if (!video.paused && !video.ended) {
+await hands.send({ image: video });
+}
+requestAnimationFrame(processVideo);
+}
+
+startHDCamera();
+
+let lastTime = 0;
+let frames = 0;
+let globalFrameCount = 0;
+
+function drawEnhancedThread(p1, p2, color, weight, isDouble = false) {
+const dx = p1.x - p2.x;
+const dy = p1.y - p2.y;
+const dist = Math.sqrt(dx*dx + dy*dy);
+if (dist < 1) return;
+
+ctx.strokeStyle = color;
+ctx.lineWidth = weight;
+
+// Draw Primary String
+ctx.beginPath();
+ctx.moveTo(p1.x, p1.y);
+const midX = (p1.x + p2.x) / 2;
+const midY = (p1.y + p2.y) / 2;
+const vibe = Math.sin(Date.now() * 0.02) * (dist * 0.015);
+ctx.quadraticCurveTo(midX + vibe, midY - vibe, p2.x, p2.y);
+ctx.stroke();
+
+if (isDouble) {
+// Draw Secondary String for Thickness/Effect
+ctx.beginPath();
+ctx.lineWidth = weight * 0.7;
+ctx.strokeStyle = 'rgba(200, 245, 255, 0.85)';
+const vibe2 = Math.cos(Date.now() * 0.015) * (dist * 0.025);
+ctx.moveTo(p1.x, p1.y);
+ctx.quadraticCurveTo(midX - vibe2, midY + vibe2, p2.x, p2.y);
+ctx.stroke();
+
+// Geometry circles at mid-tension
+if (dist > 180) {
+ctx.beginPath();
+ctx.arc(midX, midY, dist * 0.07, 0, Math.PI * 2);
+ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+ctx.lineWidth = 1;
+ctx.stroke();
+}
+}
+}
+
+function updatePhysics() {
+const active = { left: false, right: false };
+if (results && results.multiHandLandmarks) {
+results.multiHandLandmarks.forEach((landmarks, index) => {
+const sideLabel = results.multiHandedness[index].label.toLowerCase();
+const key = sideLabel === 'left' ? 'right' : 'left';
+active[key] = true;
+
+landmarks.forEach((lm, i) => {
+const targetX = (1 - lm.x) * width;
+const targetY = lm.y * height;
+const p = springPoints[key][i];
+
+p.vx += (targetX - p.x) * 0.35;
+p.vy += (targetY - p.y) * 0.35;
+p.vx *= 0.68;
+p.vy *= 0.68;
+p.x += p.vx;
+p.y += p.vy;
+});
+});
+}
+return active;
+}
+
+function loop(timestamp) {
+frames++;
+globalFrameCount++;
+if (timestamp - lastTime >= 1000) {
+fpsLabel.innerText = frames;
+frames = 0;
+lastTime = timestamp;
+}
+
+// TD-Style Timecode calculation
+const s = Math.floor(timestamp / 1000) % 60;
+const m = Math.floor(timestamp / 60000) % 60;
+const f = Math.floor((timestamp % 1000) / 16.6);
+timecodeLabel.innerText = `00:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}:${f.toString().padStart(2,'0')}`;
+frameLabel.innerText = globalFrameCount;
+
+ctx.clearRect(0, 0, width, height);
+const activeStatus = updatePhysics();
+
+ctx.globalCompositeOperation = 'lighter';
+
+// Draw Hands
+['left', 'right'].forEach(side => {
+if (activeStatus[side]) {
+const p = springPoints[side];
+// Dual strings wrist to tips
+[4, 8, 12, 16, 20].forEach(tip => {
+drawEnhancedThread(p[0], p[tip], 'rgba(255, 255, 255, 0.45)', 2.5, true);
+});
+// Finger spread structural web
+for (let i = 0; i < 17; i++) {
+drawEnhancedThread(p[i], p[i+4], 'rgba(255, 255, 255, 0.18)', 1.2, false);
+}
+}
+});
+
+// Dual-Bridge Inter-Hand Interaction
+if (activeStatus.left && activeStatus.right) {
+[4, 8, 12, 16, 20].forEach(idx => {
+drawEnhancedThread(
+springPoints.left[idx],
+springPoints.right[idx],
+'rgba(255, 255, 255, 0.95)',
+4,
+true
+);
+});
+}
+
+handLabel.innerText = (activeStatus.left ? 1 : 0) + (activeStatus.right ? 1 : 0);
+
+requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
